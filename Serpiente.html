@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Juego de la Serpiente - Cambia Color y Escenario</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap');
+  body {
+    margin: 0;
+    background: #222;
+    font-family: 'Montserrat', sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    color: #eee;
+    min-height: 100vh;
+    justify-content: center;
+    padding: 1rem;
+  }
+  h1 {
+    margin-bottom: 1rem;
+    font-weight: 700;
+    font-size: 2rem;
+    letter-spacing: 2px;
+    text-align: center;
+    user-select: none;
+  }
+  #game-container {
+    background-color: var(--bg-color, #111);
+    border-radius: 12px;
+    box-shadow: 0 0 20px rgba(0,0,0,0.8);
+    position: relative;
+    overflow: hidden;
+  }
+  canvas {
+    display: block;
+    background-color: transparent;
+    border-radius: 12px;
+  }
+  #controls {
+    margin-top: 1rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    justify-content: center;
+    align-items: center;
+  }
+  label {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    font-weight: 600;
+    font-size: 0.9rem;
+    user-select: none;
+  }
+  input[type="color"] {
+    margin-top: 0.3rem;
+    width: 40px;
+    height: 40px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 0 8px rgba(0,0,0,0.3);
+  }
+  button {
+    background-color: #5c6bc0;
+    color: white;
+    font-size: 1rem;
+    font-weight: 700;
+    padding: 0.6rem 1.2rem;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    box-shadow: 0 4px 14px rgba(92,107,192,0.6);
+    user-select: none;
+  }
+  button:hover {
+    background-color: #3f51b5;
+  }
+  button:disabled {
+    background-color: #888;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+  #score-container {
+    display: flex;
+    gap: 1rem;
+    font-weight: 700;
+    font-size: 1.25rem;
+    min-width: 140px;
+    user-select: none;
+    text-align: center;
+  }
+  #score, #record {
+    min-width: 70px;
+  }
+  @media (max-width: 480px) {
+    #controls {
+      flex-direction: column;
+    }
+    #score-container {
+      justify-content: center;
+    }
+  }
+</style>
+</head>
+<body>
+<h1>Juego de la Serpiente</h1>
+<div id="game-container" aria-label="Área del juego de la serpiente">
+  <canvas id="game-canvas" width="400" height="400" role="img" aria-describedby="score record"></canvas>
+</div>
+<div id="controls" aria-label="Controles del juego">
+  <button id="start-button" aria-pressed="false">Iniciar Juego</button>
+  <label for="snake-color-picker">Color Serpiente
+    <input type="color" id="snake-color-picker" value="#5c6bc0" title="Cambiar color de la serpiente" />
+  </label>
+  <label for="bg-color-picker">Color Escenario
+    <input type="color" id="bg-color-picker" value="#111111" title="Cambiar color del escenario" />
+  </label>
+  <div id="score-container">
+    <div id="score" aria-live="polite" aria-atomic="true" aria-label="Puntaje actual">Puntaje: 0</div>
+    <div id="record" aria-live="polite" aria-atomic="true" aria-label="Récord de puntaje">Récord: 0</div>
+  </div>
+</div>
+
+<script>
+  (() => {
+    const canvas = document.getElementById('game-canvas');
+    const ctx = canvas.getContext('2d');
+    const startButton = document.getElementById('start-button');
+    const snakeColorPicker = document.getElementById('snake-color-picker');
+    const bgColorPicker = document.getElementById('bg-color-picker');
+    const scoreDisplay = document.getElementById('score');
+    const recordDisplay = document.getElementById('record');
+    const gameContainer = document.getElementById('game-container');
+
+    const CANVAS_SIZE = 400;
+    const CELL_SIZE = 20;
+    const COLS = CANVAS_SIZE / CELL_SIZE;
+    const ROWS = CANVAS_SIZE / CELL_SIZE;
+
+    let snake = [];
+    let direction = {x: 1, y: 0}; // moving right initially
+    let food = null;
+    let gameInterval = null;
+    let score = 0;
+    let record = 0;
+    let isRunning = false;
+    let snakeHue = 200; // starting hue for snake color cycling
+
+    // Initialize Colors
+    let snakeColor = snakeColorPicker.value; // hex string
+    let bgColor = bgColorPicker.value; // hex string
+
+    // Load record from localStorage
+    function loadRecord() {
+      const savedRecord = localStorage.getItem('snake-record');
+      record = savedRecord ? parseInt(savedRecord, 10) : 0;
+    }
+
+    // Save record to localStorage
+    function saveRecord() {
+      localStorage.setItem('snake-record', record);
+    }
+
+    // Convert hex to rgb object
+    function hexToRgb(hex) {
+      const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
+      hex = hex.replace(shorthandRegex, (m, r, g, b) => r + r + g + g + b + b);
+      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+      return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16)
+      } : null;
+    }
+
+    // Draw a rectangular cell
+    function drawCell(x, y, color) {
+      ctx.fillStyle = color;
+      ctx.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+      // Add subtle shadow for 3D effect
+      ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+      ctx.strokeRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+    }
+
+    // Place food at a random free cell
+    function placeFood() {
+      let freeCells = [];
+      for(let x=0;x<COLS;x++) {
+        for(let y=0;y<ROWS;y++) {
+          if(!snake.some(seg => seg.x === x && seg.y === y)) {
+            freeCells.push({x, y});
+          }
+        }
+      }
+      if(freeCells.length === 0) return null; // no free space, snake fills board?
+      food = freeCells[Math.floor(Math.random() * freeCells.length)];
+    }
+
+    // Initialize game state
+    function initGame() {
+      snake = [
+        {x: 5, y: Math.floor(ROWS/2)},
+        {x: 4, y: Math.floor(ROWS/2)},
+        {x: 3, y: Math.floor(ROWS/2)}
+      ];
+      direction = {x: 1, y: 0};
+      score = 0;
+      snakeHue = 200;
+      placeFood();
+      isRunning = true;
+      updateScore();
+      updateRecord();
+    }
+
+    // Check collision with walls or self
+    function isCollision(pos) {
+      if(pos.x < 0 || pos.x >= COLS || pos.y < 0 || pos.y >= ROWS) return true;
+      if(snake.some(seg => seg.x === pos.x && seg.y === pos.y)) return true;
+      return false;
+    }
+
+    // Update snake color cycling by changing the hue
+    function getSnakeColor() {
+      snakeHue += 2;
+      if(snakeHue > 360) snakeHue -= 360;
+      return `hsl(${snakeHue}, 70%, 60%)`;
+    }
+
+    // Update the snake based on current direction and game rules
+    function update() {
+      const head = snake[0];
+      const newHead = {x: head.x + direction.x, y: head.y + direction.y};
+
+      // Collision detection
+      if(isCollision(newHead)) {
+        endGame();
+        return;
+      }
+
+      snake.unshift(newHead);
+
+      // Check if food eaten
+      if(food && newHead.x === food.x && newHead.y === food.y) {
+        score++;
+        updateScore();
+        if(score > record) {
+          record = score;
+          updateRecord();
+          saveRecord();
+        }
+        placeFood();
+      } else {
+        snake.pop();
+      }
+
+      draw();
+    }
+
+    // Draw game elements on canvas
+    function draw() {
+      // Clear canvas with background color
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+      // Draw food
+      if(food) {
+        drawCell(food.x, food.y, '#e74c3c');
+      }
+
+      // Draw snake with dynamic colors
+      snake.forEach((segment, index) => {
+        let color;
+        if(index === 0) {
+          // head - bright color
+          color = `hsl(${(snakeHue + 60) % 360}, 90%, 70%)`;
+        } else {
+          // body - change color gradually
+          const hueStep = (index * 10) % 360;
+          color = `hsl(${(snakeHue + hueStep) % 360}, 70%, 60%)`;
+        }
+        drawCell(segment.x, segment.y, color);
+      });
+    }
+
+    // Update score display
+    function updateScore() {
+      scoreDisplay.textContent = 'Puntaje: ' + score;
+    }
+    // Update record display
+    function updateRecord() {
+      recordDisplay.textContent = 'Récord: ' + record;
+    }
+
+    // End game logic
+    function endGame() {
+      isRunning = false;
+      clearInterval(gameInterval);
+      alert('¡Juego terminado! Tu puntaje: ' + score);
+      startButton.textContent = 'Iniciar Juego';
+      startButton.setAttribute('aria-pressed', 'false');
+    }
+
+    // Game loop interval function calls update at fixed FPS
+    function startGameLoop() {
+      gameInterval = setInterval(update, 120);
+    }
+
+    // Key press events for arrow keys and WASD controls
+    document.addEventListener('keydown', e => {
+      if(!isRunning) return;
+      const newDir = {x: direction.x, y: direction.y};
+      switch(e.key) {
+        case 'ArrowUp':
+        case 'w':
+        case 'W':
+          if(direction.y !== 1) newDir.x = 0, newDir.y = -1;
+          break;
+        case 'ArrowDown':
+        case 's':
+        case 'S':
+          if(direction.y !== -1) newDir.x = 0, newDir.y = 1;
+          break;
+        case 'ArrowLeft':
+        case 'a':
+        case 'A':
+          if(direction.x !== 1) newDir.x = -1, newDir.y = 0;
+          break;
+        case 'ArrowRight':
+        case 'd':
+        case 'D':
+          if(direction.x !== -1) newDir.x = 1, newDir.y = 0;
+          break;
+        default:
+          return; // ignore other keys
+      }
+      direction = newDir;
+      e.preventDefault();
+    });
+
+    // Start button click handler
+    startButton.addEventListener('click', () => {
+      if(isRunning) {
+        // Restart game on start button press if running
+        clearInterval(gameInterval);
+      }
+      initGame();
+      startGameLoop();
+      startButton.textContent = 'Reiniciar Juego';
+      startButton.setAttribute('aria-pressed', 'true');
+    });
+
+    // Snake color change handler updates current snake color variable
+    snakeColorPicker.addEventListener('input', e => {
+      snakeColor = e.target.value;
+      // not used directly currently because snake color is dynamic hue cycling
+      // but we can change background to complement snake or in future enhancements
+    });
+
+    // Background color change handler changes canvas background dynamically
+    bgColorPicker.addEventListener('input', e => {
+      bgColor = e.target.value;
+      gameContainer.style.setProperty('--bg-color', bgColor);
+      if(!isRunning) {
+        // repaint background immediately if game isn't running
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(0,0,canvas.width, canvas.height);
+      }
+    });
+
+    // Initial background color setting on load
+    gameContainer.style.setProperty('--bg-color', bgColor);
+
+    // Draw initial blank canvas background before game start
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Load the saved record on page load
+    loadRecord();
+    updateRecord();
+  })();
+</script>
+</body>
+</html>
+
+
+
